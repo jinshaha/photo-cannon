@@ -1,0 +1,67 @@
+const C = 'fieldphoto-v2';
+
+/* 설치: 핵심 파일만. 실패해도 설치는 성공시킨다 (앱이 죽지 않도록) */
+self.addEventListener('install', e => {
+  e.waitUntil(
+    caches.open(C)
+      .then(c => Promise.allSettled([
+        c.add('./'),
+        c.add('./index.html')
+      ]))
+      .then(() => self.skipWaiting())
+      .catch(() => self.skipWaiting())
+  );
+});
+
+self.addEventListener('activate', e => {
+  e.waitUntil(
+    caches.keys()
+      .then(ks => Promise.all(ks.filter(k => k !== C).map(k => caches.delete(k))))
+      .then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener('fetch', e => {
+  const req = e.request;
+  if (req.method !== 'GET') return;
+
+  const url = new URL(req.url);
+
+    /* 태그 목록: 네트워크 우선 → 실패 시 캐시 */
+  if (url.pathname.endsWith('/data/requests.json')) {
+    e.respondWith(
+      fetch(req)
+        .then(r => {
+          if (r.ok) caches.open(C).then(c => c.put(req, r.clone()));
+          return r;
+        })
+        .catch(() => caches.match(req))
+    );
+    return;
+  }
+
+    /* 나머지(HTML/JS/CDN): 캐시 우선 → 없으면 네트워크 → 받아오면 캐시 */
+  e.respondWith(
+    caches.match(req).then(hit => {
+      if (hit) return hit;
+      return fetch(req)
+        .then(r => {
+          if (r.ok) {
+            const cp = r.clone();
+            caches.open(C).then(c => c.put(req, cp)).catch(() => {});
+          }
+          return r;
+        })
+        .catch(() => hit);   // 오프라인 + 캐시 없음 → 실패
+    })
+  );
+});
+
+/* 앱에서 초기화 요청 시 */
+self.addEventListener('message', e => {
+  if (e.data === 'reset') {
+    caches.keys()
+      .then(ks => Promise.all(ks.map(k => caches.delete(k))))
+      .then(() => self.registration.unregister());
+  }
+});
