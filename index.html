@@ -150,8 +150,10 @@
   .del:active{color:var(--red)}
 
   .to{
-    width:100%;text-align:center;font-size:11px;color:var(--dim);font-weight:600;
+    width:100%;min-height:38px;text-align:center;font:600 12px inherit;color:var(--dim);
+    background:var(--panel);border:1px solid var(--line);border-radius:8px;cursor:pointer;
   }
+  .to:active{background:var(--panel2)}
   .to b{color:var(--amber);font-family:ui-monospace,Menlo,monospace;font-weight:800}
 
   .note{
@@ -219,7 +221,7 @@
     <div id="tags"></div>
   </div>
   <div class="bar" style="flex-direction:column;gap:8px">
-    <div class="to">받는사람 <b id="mailto">—</b> · 전송 시 주소가 자동 복사됩니다</div>
+    <button class="to" id="cp">받는사람 <b id="mailto">—</b> · 탭하면 복사</button>
     <div style="display:flex;gap:8px;width:100%">
       <button class="btn gh" id="wipe">초기화</button>
       <button class="btn" id="zip">사진 전송</button>
@@ -677,13 +679,10 @@ $('zip').onclick = async () => {
     const done = RQ.tags.length - miss.length;
     const txt = `받는사람: ${MAIL_TO}\n\n신청서: ${RQ.name}\n태그: ${RQ.tags.length}개 (완료 ${done} / 미완료 ${miss.length})\n사진: ${all.length}장`;
 
-    /* 받는사람 주소를 클립보드에 복사 → 메일 앱에서 붙여넣기 한 번이면 끝 */
-    try { await navigator.clipboard.writeText(MAIL_TO); } catch(e){}
-
     if (navigator.canShare && navigator.canShare({files:[zf]})){
       try{
         await navigator.share({title:`[사진접수] ${base}`, text:txt, files:[zf]});
-        toast('주소 복사됨 → 받는사람에 붙여넣기');
+        toast('전송 완료');
       }catch(e){ if (e.name !== 'AbortError') dl(zf); }
     } else dl(zf);
 
@@ -728,6 +727,21 @@ document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
 addEventListener('online',  () => load(false));
 addEventListener('offline', () => load(false));
 $('mailto').textContent = MAIL_TO;
+$('cp').onclick = async () => {
+  try {
+    await navigator.clipboard.writeText(MAIL_TO);
+    toast('주소 복사됨');
+  } catch(e) {
+    const t = document.createElement('textarea');
+    t.value = MAIL_TO;
+    t.style.cssText = 'position:fixed;opacity:0';
+    document.body.appendChild(t);
+    t.select();
+    try { document.execCommand('copy'); toast('주소 복사됨'); }
+    catch(e2){ toast(MAIL_TO); }
+    t.remove();
+  }
+};
 load(false);
 
 /* 오프라인 지원 — 실패해도 앱은 정상 동작 */
