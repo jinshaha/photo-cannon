@@ -460,12 +460,17 @@ async function openTag(t){
   go('v3');
 }
 
+let URLS = [];
 function drawSlots(){
+  URLS.forEach(u => URL.revokeObjectURL(u));
+  URLS = [];
   $('slots').innerHTML = [0,1,2,3,4].map(i => {
     const b = BUF[i];
+    let src = '';
+    if (b) { const u = URL.createObjectURL(b); URLS.push(u); src = `src="${u}"`; }
     return `<label class="slot ${b?'on':''}">
       <div class="n">${i+1}</div>
-      <img class="th" ${b?`src="${URL.createObjectURL(b)}"`:''} alt="">
+      <img class="th" ${src} alt="">
       <div class="st">
         <b>${b ? '사진 '+(i+1) : '사진 '+(i+1)+' 촬영'}</b>
         <i>${b ? (b.size/1048576).toFixed(1)+' MB · 저장됨' : '비어 있음'}</i>
@@ -483,10 +488,33 @@ function drawSlots(){
   $('save').textContent = n === 5 ? '저장' : n ? `저장 (${n}/5 — ${5-n}장 부족)` : '사진을 촬영하십시오';
 }
 
-$('slots').addEventListener('change', e => {
+/* 아이폰 원본 사진은 4~8MB. 메모리 폭발 방지를 위해 축소 저장 */
+function shrink(file){
+  return new Promise(ok => {
+    const img = new Image();
+    const u = URL.createObjectURL(file);
+    img.onload = () => {
+      const MAX = 1600;
+      let {width:w, height:h} = img;
+      const r = Math.min(1, MAX / Math.max(w, h));
+      w = Math.round(w * r); h = Math.round(h * r);
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(u);
+      c.toBlob(b => ok(b || file), 'image/jpeg', 0.82);
+    };
+    img.onerror = () => { URL.revokeObjectURL(u); ok(file); };
+    img.src = u;
+  });
+}
+
+$('slots').addEventListener('change', async e => {
   const inp = e.target;
   if (inp.type !== 'file' || !inp.files[0]) return;
-  BUF[+inp.dataset.i] = inp.files[0];
+  const i = +inp.dataset.i;
+  toast('처리 중…');
+  BUF[i] = await shrink(inp.files[0]);
   drawSlots();
 });
 
@@ -535,7 +563,9 @@ $('zip').onclick = async () => {
   if (miss.length) root.file('_미완료태그.txt', miss.map(t=>`${t}  (${CNT[t]||0}/5)`).join('\r\n'));
   root.file('_목록.csv', '\uFEFF' + lines.join('\r\n'));
 
-  const blob = await z.generateAsync({type:'blob', compression:'STORE'});
+  const blob = await z.generateAsync({type:'blob', compression:'STORE'}, m => {
+    $('zip').textContent = '압축 중 ' + Math.round(m.percent) + '%';
+  });
   const zf = new File([blob], `${base}_사진.zip`, {type:'application/zip'});
 
   $('zip').textContent = 'ZIP 내보내기';
@@ -585,8 +615,17 @@ document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
 addEventListener('online',  () => load(false));
 addEventListener('offline', () => load(false));
 
+/* 이전에 등록된 서비스워커/캐시 완전 제거 (오류 복구) */
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations()
+    .then(rs => rs.forEach(r => r.unregister()))
+    .catch(()=>{});
+}
+if (window.caches) {
+  caches.keys().then(ks => ks.forEach(k => caches.delete(k))).catch(()=>{});
+}
+
 load(false);
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
 </script>
 </body>
 </html>
