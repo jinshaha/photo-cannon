@@ -649,6 +649,29 @@ async function makeZip(files, onProg){
 }
 
 /* ══════════ ZIP 내보내기 ══════════ */
+/* 진단창 */
+function diag(msg){
+  let d = document.getElementById('diagbox');
+  if (!d){
+    d = document.createElement('div');
+    d.id = 'diagbox';
+    d.style.cssText = 'position:fixed;left:0;right:0;top:0;bottom:0;z-index:9999;'
+      + 'background:#0c0f13;color:#7fe3a8;padding:16px;font:12px/1.5 ui-monospace,monospace;'
+      + 'overflow:auto;white-space:pre-wrap;-webkit-overflow-scrolling:touch';
+    const b = document.createElement('button');
+    b.textContent = '닫기';
+    b.style.cssText = 'position:sticky;top:0;width:100%;height:44px;margin-bottom:10px;'
+      + 'border:0;border-radius:8px;background:#ffb020;color:#191100;font:800 15px sans-serif';
+    b.onclick = () => d.remove();
+    d.appendChild(b);
+    const p = document.createElement('div');
+    p.id = 'diagtxt';
+    d.appendChild(p);
+    document.body.appendChild(d);
+  }
+  document.getElementById('diagtxt').textContent += msg + '\n';
+}
+
 $('zip').onclick = async () => {
   const all = (await byReq(RQ.id)).sort((a,b) =>
     a.tag.localeCompare(b.tag) || a.idx - b.idx);
@@ -663,16 +686,20 @@ $('zip').onclick = async () => {
     : safe(RQ.name.replace(/\.(xlsx|xls|csv)$/i,''));
 
   try{
+    diag('사진 레코드: ' + all.length + '건');
     const files = [];
     const lines = ['신청서,태그,순번,파일명'];
 
     for (const s of all){
       const fn = `${safe(s.tag)}_${String(s.idx+1).padStart(2,'0')}.${s.ext||'jpg'}`;
+      diag('읽는 중: ' + fn + '  buf=' + (!!s.buf) + ' blob=' + (!!s.blob));
       const bytes = s.buf ? new Uint8Array(s.buf)
                           : new Uint8Array(await s.blob.arrayBuffer());
+      diag('   → ' + bytes.length + ' bytes');
       files.push({ path: `${base}/${safe(s.tag)}/${fn}`, bytes });
       lines.push(`${base},${s.tag},${s.idx+1},${fn}`);
     }
+    diag('읽기 완료 → ZIP 생성 시작');
 
     const miss = RQ.tags.filter(t => (CNT[t]||0) < 5);
     if (miss.length)
@@ -682,7 +709,9 @@ $('zip').onclick = async () => {
       bytes: UTF8.encode('\uFEFF' + lines.join('\r\n')) });
 
     const blob = await makeZip(files, p => $('zip').textContent = '압축 중 ' + p + '%');
+    diag('ZIP 완성: ' + (blob.size/1048576).toFixed(2) + ' MB');
     const zf = new File([blob], `${base}_사진.zip`, {type:'application/zip'});
+    diag('공유 시도… canShare=' + (navigator.canShare ? navigator.canShare({files:[zf]}) : 'no'));
 
     const done = RQ.tags.length - miss.length;
     const txt = `신청서: ${RQ.name}\n태그: ${RQ.tags.length}개 (완료 ${done} / 미완료 ${miss.length})\n사진: ${all.length}장`;
@@ -695,9 +724,9 @@ $('zip').onclick = async () => {
     } else dl(zf);
 
   }catch(err){
-    alert('ZIP 생성 실패\n\n' + (err && err.message ? err.message : String(err)) +
-          '\n\n사진 수: ' + all.length + '장');
+    diag('!! 실패: ' + (err && err.message ? err.message : String(err)));
   }finally{
+    diag('종료');
     $('zip').textContent = 'ZIP 내보내기';
     $('zip').disabled = false;
   }
