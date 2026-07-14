@@ -149,6 +149,11 @@
   }
   .del:active{color:var(--red)}
 
+  .to{
+    width:100%;text-align:center;font-size:11px;color:var(--dim);font-weight:600;
+  }
+  .to b{color:var(--amber);font-family:ui-monospace,Menlo,monospace;font-weight:800}
+
   .note{
     padding:11px 13px;margin-bottom:12px;border-radius:9px;font-size:13px;font-weight:600;
     background:rgba(255,176,32,.1);border-left:4px solid var(--amber);color:var(--amber);
@@ -213,9 +218,12 @@
     </div>
     <div id="tags"></div>
   </div>
-  <div class="bar">
-    <button class="btn gh" id="wipe">초기화</button>
-    <button class="btn" id="zip">ZIP 내보내기</button>
+  <div class="bar" style="flex-direction:column;gap:8px">
+    <div class="to">받는사람 <b id="mailto">—</b> · 전송 시 주소가 자동 복사됩니다</div>
+    <div style="display:flex;gap:8px;width:100%">
+      <button class="btn gh" id="wipe">초기화</button>
+      <button class="btn" id="zip">사진 전송</button>
+    </div>
   </div>
 </div>
 
@@ -239,6 +247,7 @@
 <script>
 /* ══════════ 설정 ══════════ */
 const DATA_URL = './data/requests.json';   // PC에서 갱신하는 파일
+const MAIL_TO  = 'jinshaha@hd.com';        // 사진 접수 주소
 
 /* ══════════ 유틸 ══════════ */
 const $ = i => document.getElementById(i);
@@ -635,7 +644,7 @@ $('zip').onclick = async () => {
     a.tag.localeCompare(b.tag) || a.idx - b.idx);
   if (!all.length) return;
 
-  $('zip').textContent = '압축 중…';
+  $('zip').textContent = '준비 중…';
   $('zip').disabled = true;
 
   const stamp = new Date().toISOString().slice(0,10).replace(/-/g,'');
@@ -666,19 +675,22 @@ $('zip').onclick = async () => {
     const zf = new File([blob], `${base}_사진.zip`, {type:'application/zip'});
 
     const done = RQ.tags.length - miss.length;
-    const txt = `신청서: ${RQ.name}\n태그: ${RQ.tags.length}개 (완료 ${done} / 미완료 ${miss.length})\n사진: ${all.length}장`;
+    const txt = `받는사람: ${MAIL_TO}\n\n신청서: ${RQ.name}\n태그: ${RQ.tags.length}개 (완료 ${done} / 미완료 ${miss.length})\n사진: ${all.length}장`;
+
+    /* 받는사람 주소를 클립보드에 복사 → 메일 앱에서 붙여넣기 한 번이면 끝 */
+    try { await navigator.clipboard.writeText(MAIL_TO); } catch(e){}
 
     if (navigator.canShare && navigator.canShare({files:[zf]})){
       try{
         await navigator.share({title:`[사진접수] ${base}`, text:txt, files:[zf]});
-        toast('전송 완료');
+        toast('주소 복사됨 → 받는사람에 붙여넣기');
       }catch(e){ if (e.name !== 'AbortError') dl(zf); }
     } else dl(zf);
 
   }catch(err){
     alert('ZIP 생성 실패\n\n' + (err && err.message ? err.message : String(err)));
   }finally{
-    $('zip').textContent = 'ZIP 내보내기';
+    $('zip').textContent = '사진 전송';
     $('zip').disabled = false;
   }
 };
@@ -715,6 +727,7 @@ document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
 });
 addEventListener('online',  () => load(false));
 addEventListener('offline', () => load(false));
+$('mailto').textContent = MAIL_TO;
 load(false);
 
 /* 오프라인 지원 — 실패해도 앱은 정상 동작 */
