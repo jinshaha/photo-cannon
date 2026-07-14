@@ -266,7 +266,7 @@ let TO; const toast = m => { const t=$('toast'); t.textContent=m; t.classList.ad
 let DB;
 const db = () => new Promise((ok,no)=>{
   if (DB) return ok(DB);
-  const r = indexedDB.open('fieldphoto2', 1);
+  const r = indexedDB.open('fieldphoto3', 1);
   r.onupgradeneeded = e => {
     const d = e.target.result;
     if (!d.objectStoreNames.contains('shot')) {
@@ -472,7 +472,7 @@ async function openTag(t){
   BUF = [null,null,null,null,null];
   for (let i=0;i<5;i++){
     const s = await get('shot', key(RQ.id, t, i));
-    if (s) BUF[i] = s.blob;
+    if (s) BUF[i] = s.buf ? new Blob([s.buf], {type: s.type || 'image/jpeg'}) : s.blob;
   }
   drawSlots();
   go('v3');
@@ -543,7 +543,11 @@ $('save').onclick = async () => {
     if (BUF[i]){
       const f = BUF[i];
       const ext = (f.name && f.name.includes('.')) ? f.name.split('.').pop().toLowerCase() : 'jpg';
-      await put('shot', {k, req:RQ.id, tag:TG, idx:i, ext, blob:f, at:Date.now()});
+      /* iOS Safari: IndexedDB에 Blob을 넣으면 재접속 후 읽을 때 멈춘다.
+         바이트(ArrayBuffer)로 저장한다. */
+      const buf = await f.arrayBuffer();
+      await put('shot', {k, req:RQ.id, tag:TG, idx:i, ext,
+                         buf, type:f.type || 'image/jpeg', size:buf.byteLength, at:Date.now()});
       n++;
     } else {
       await del('shot', k);
@@ -591,12 +595,9 @@ async function makeZip(files, onProg){
     const f = files[i];
     const name = UTF8.encode(f.path);
 
-    let crc, sz;
-    {
-      const bytes = new Uint8Array(await f.blob.arrayBuffer());
-      crc = crc32(bytes);
-      sz  = bytes.length;
-    }   // bytes → 스코프 밖 → GC 대상
+    const bytes = f.bytes;
+    const crc = crc32(bytes);
+    const sz  = bytes.length;
 
     const lh = new DataView(new ArrayBuffer(30));
     lh.setUint32(0, 0x04034b50, true);
@@ -611,7 +612,7 @@ async function makeZip(files, onProg){
     lh.setUint16(26, name.length, true);
     lh.setUint16(28, 0, true);
 
-    parts.push(new Uint8Array(lh.buffer), name, f.blob);
+    parts.push(new Uint8Array(lh.buffer), name, bytes);
 
     const ch = new DataView(new ArrayBuffer(46));
     ch.setUint32(0, 0x02014b50, true);
@@ -667,16 +668,18 @@ $('zip').onclick = async () => {
 
     for (const s of all){
       const fn = `${safe(s.tag)}_${String(s.idx+1).padStart(2,'0')}.${s.ext||'jpg'}`;
-      files.push({ path: `${base}/${safe(s.tag)}/${fn}`, blob: s.blob });
+      const bytes = s.buf ? new Uint8Array(s.buf)
+                          : new Uint8Array(await s.blob.arrayBuffer());
+      files.push({ path: `${base}/${safe(s.tag)}/${fn}`, bytes });
       lines.push(`${base},${s.tag},${s.idx+1},${fn}`);
     }
 
     const miss = RQ.tags.filter(t => (CNT[t]||0) < 5);
     if (miss.length)
       files.push({ path:`${base}/_미완료태그.txt`,
-        blob: new Blob(['\uFEFF' + miss.map(t=>`${t}  (${CNT[t]||0}/5)`).join('\r\n')]) });
+        bytes: UTF8.encode('\uFEFF' + miss.map(t=>`${t}  (${CNT[t]||0}/5)`).join('\r\n')) });
     files.push({ path:`${base}/_목록.csv`,
-      blob: new Blob(['\uFEFF' + lines.join('\r\n')]) });
+      bytes: UTF8.encode('\uFEFF' + lines.join('\r\n')) });
 
     const blob = await makeZip(files, p => $('zip').textContent = '압축 중 ' + p + '%');
     const zf = new File([blob], `${base}_사진.zip`, {type:'application/zip'});
