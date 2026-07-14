@@ -722,6 +722,13 @@ addEventListener('offline', () => load(false));
 
 step('init');
 load(false).then(()=>step('완료'));
+
+/* 오프라인 지원 — 실패해도 앱은 정상 동작 */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(()=>{});
+  });
+}
 </script>
 </body>
 </html>
