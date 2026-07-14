@@ -1,4 +1,4 @@
-const C = 'fp-v4';
+const C = 'fp-v5';
 
 self.addEventListener('install', e => {
   self.skipWaiting();
@@ -22,18 +22,6 @@ self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
   if (!req.url.startsWith(self.location.origin)) return;
-
-  if (req.url.includes('/data/requests.json')) {
-    e.respondWith(
-      fetch(req)
-        .then(r => {
-          if (r.ok) { const cp = r.clone(); caches.open(C).then(c => c.put(req, cp)); }
-          return r;
-        })
-        .catch(() => caches.match(req).then(h => h || Response.error()))
-    );
-    return;
-  }
 
   e.respondWith(
     caches.match(req).then(hit => {

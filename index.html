@@ -134,6 +134,15 @@
   .btn.gh{background:transparent;border:2px solid var(--line);color:var(--fg);cursor:pointer;flex:0 0 auto;padding:0 18px}
   .btn.dz{background:transparent;border:2px solid var(--red);color:var(--red);cursor:pointer}
 
+  .file{
+    display:flex;align-items:center;justify-content:center;
+    width:100%;min-height:56px;padding:0 14px;margin-bottom:0;
+    background:var(--panel);border:2px dashed var(--amber);border-radius:11px;
+    color:var(--amber);font:800 15px inherit;cursor:pointer;
+  }
+  .file:active{background:var(--panel2)}
+  .file input{display:none}
+
   /* ── 태그 직접 추가 ── */
   .add{display:none;gap:6px;margin-bottom:12px}
   .add.on{display:flex}
@@ -184,15 +193,18 @@
 <!-- ══ 1. 신청서 선택 ══ -->
 <div class="view on" id="v1">
   <div class="top">
-    <div class="ttl"><b>검사신청서 선택</b><span id="upd">불러오는 중…</span></div>
-    <span class="badge" id="net">온라인</span>
+    <div class="ttl"><b>검사신청서</b><span id="upd">—</span></div>
   </div>
-  <div class="body">
+  <div class="body pad">
+    <label class="file" id="fbox">
+      <span id="ftxt">＋ 검사신청서 엑셀 불러오기</span>
+      <input type="file" id="xls" accept=".xlsx,.xls,.csv" multiple>
+    </label>
+    <div class="note" style="margin-top:12px">
+      카카오워크 등으로 받은 검사신청서 파일을 선택하십시오. A열의 태그를 읽어옵니다.
+    </div>
     <input class="srch" id="q1" placeholder="신청서 검색">
     <div id="reqs"></div>
-  </div>
-  <div class="bar">
-    <button class="btn gh" id="sync" style="flex:1">목록 새로고침</button>
   </div>
 </div>
 
@@ -248,7 +260,6 @@
 
 <script>
 /* ══════════ 설정 ══════════ */
-const DATA_URL = './data/requests.json';   // PC에서 갱신하는 파일
 const MAIL_TO  = 'jinshaha@hd.com';        // 사진 접수 주소
 
 /* ══════════ 유틸 ══════════ */
@@ -299,35 +310,185 @@ const MID = '_manual';
 const manualTags = async () => ((await get('kv','manual'))?.v) || [];
 const saveManual = t => put('kv', {k:'manual', v:t});
 
-/* ══════════ 신청서 목록 ══════════ */
-async function load(force){
-  const on = navigator.onLine;
-  $('net').textContent = on ? '온라인' : '오프라인';
-  $('net').classList.toggle('off', !on);
 
-  if (on) {
-    try{
-      const r = await fetch(DATA_URL + '?t=' + Date.now(), {cache:'no-store'});
-      if (!r.ok) throw 0;
-      const j = await r.json();
-      REQS = j.requests || [];
-      await put('kv', {k:'reqs', v:j});
-      $('upd').textContent = '갱신 ' + (j.updated || '-') + ' · ' + REQS.length + '건';
-      if (force) toast('목록을 갱신했습니다');
-      drawReqs(); return;
-    }catch(e){ /* 캐시로 */ }
+/* ══════════ 엑셀 읽기 (외부 라이브러리 없음) ══════════
+   xlsx = ZIP 이므로 직접 풀어서 A열만 뽑는다.
+   압축 해제는 브라우저 내장 DecompressionStream 사용 (iOS 16.4+) */
+
+async function inflateRaw(bytes){
+  const ds = new DecompressionStream('deflate-raw');
+  const stream = new Blob([bytes]).stream().pipeThrough(ds);
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+/* ZIP 안에서 특정 파일들 꺼내기 → {경로: 문자열} */
+async function unzip(buf, wanted){
+  const b = new Uint8Array(buf);
+  const dv = new DataView(b.buffer);
+  const dec = new TextDecoder();
+
+  /* End of Central Directory 찾기 (뒤에서부터) */
+  let eocd = -1;
+  for (let i = b.length - 22; i >= 0 && i > b.length - 66000; i--){
+    if (dv.getUint32(i, true) === 0x06054b50){ eocd = i; break; }
   }
+  if (eocd < 0) throw new Error('ZIP 형식이 아닙니다');
+
+  const total = dv.getUint16(eocd + 10, true);
+  let p = dv.getUint32(eocd + 16, true);
+  const out = {};
+
+  for (let i = 0; i < total; i++){
+    if (dv.getUint32(p, true) !== 0x02014b50) break;
+    const method = dv.getUint16(p + 10, true);
+    const csize  = dv.getUint32(p + 20, true);
+    const nlen   = dv.getUint16(p + 28, true);
+    const elen   = dv.getUint16(p + 30, true);
+    const clen   = dv.getUint16(p + 32, true);
+    const lho    = dv.getUint32(p + 42, true);
+    const name   = dec.decode(b.subarray(p + 46, p + 46 + nlen));
+
+    if (wanted.some(w => name === w || (w.endsWith('*') && name.startsWith(w.slice(0,-1))))){
+      const ln = dv.getUint16(lho + 26, true);
+      const le = dv.getUint16(lho + 28, true);
+      const start = lho + 30 + ln + le;
+      const raw = b.subarray(start, start + csize);
+      const data = method === 0 ? raw : await inflateRaw(raw);
+      out[name] = dec.decode(data);
+    }
+    p += 46 + nlen + elen + clen;
+  }
+  return out;
+}
+
+/* xlsx → A열 값 배열 */
+async function readXlsx(file){
+  const buf = await file.arrayBuffer();
+  const z = await unzip(buf, [
+    'xl/sharedStrings.xml',
+    'xl/worksheets/sheet1.xml',
+    'xl/workbook.xml',
+    'xl/worksheets/*'
+  ]);
+
+  /* 공유 문자열 */
+  const shared = [];
+  const ss = z['xl/sharedStrings.xml'];
+  if (ss){
+    const re = /<si\b[^>]*>([\s\S]*?)<\/si>/g;
+    let m;
+    while ((m = re.exec(ss))){
+      const txt = (m[1].match(/<t\b[^>]*>([\s\S]*?)<\/t>/g) || [])
+        .map(x => x.replace(/<[^>]+>/g, ''))
+        .join('');
+      shared.push(unxml(txt));
+    }
+  }
+
+  /* 첫 시트 */
+  let sheet = z['xl/worksheets/sheet1.xml'];
+  if (!sheet){
+    const k = Object.keys(z).filter(x => x.startsWith('xl/worksheets/') && x.endsWith('.xml'));
+    if (!k.length) throw new Error('시트를 찾을 수 없습니다');
+    sheet = z[k.sort()[0]];
+  }
+
+  /* A열 셀만 추출 */
+  const tags = [];
+  const cre = /<c\s+r="A(\d+)"([^>]*)(?:\/>|>([\s\S]*?)<\/c>)/g;
+  let m;
+  while ((m = cre.exec(sheet))){
+    const attr = m[2] || '';
+    const body = m[3] || '';
+    const type = (attr.match(/t="([^"]+)"/) || [])[1];
+    let v = '';
+
+    if (type === 'inlineStr'){
+      v = (body.match(/<t\b[^>]*>([\s\S]*?)<\/t>/) || [])[1] || '';
+    } else {
+      const raw = (body.match(/<v>([\s\S]*?)<\/v>/) || [])[1];
+      if (raw === undefined) continue;
+      v = (type === 's') ? (shared[+raw] ?? '') : raw;
+    }
+    v = unxml(String(v)).trim();
+    if (v) tags.push(v);
+  }
+  return tags;
+}
+
+function unxml(t){
+  return t.replace(/&lt;/g,'<').replace(/&gt;/g,'>')
+          .replace(/&quot;/g,'"').replace(/&apos;/g,"'")
+          .replace(/&amp;/g,'&');
+}
+
+/* csv → A열 */
+async function readCsv(file){
+  const txt = await file.text();
+  return txt.split(/\r?\n/)
+    .map(l => (l.split(',')[0] || '').replace(/^"|"$/g,'').trim())
+    .filter(Boolean);
+}
+
+/* ══════════ 신청서 목록 ══════════ */
+async function load(){
   const c = await get('kv','reqs');
-  if (c && c.v){
-    REQS = c.v.requests || [];
-    $('upd').textContent = '저장본 ' + (c.v.updated || '-') + ' · ' + REQS.length + '건';
-    if (force) toast(on ? '갱신 실패 — 저장본 사용' : '오프라인 — 저장본 사용');
-  } else {
-    REQS = [];
-    $('upd').textContent = '목록 없음 — 온라인에서 1회 접속 필요';
-  }
+  REQS = (c && c.v) ? c.v : [];
+  purge();
+  $('upd').textContent = REQS.length ? REQS.length + '건 등록됨' : '신청서를 불러오십시오';
   drawReqs();
 }
+
+/* 7일 지난 신청서 자동 삭제 */
+async function purge(){
+  const LIMIT = 7 * 86400000;
+  const now = Date.now();
+  const keep = REQS.filter(r => !r.at || (now - r.at) < LIMIT);
+  if (keep.length !== REQS.length){
+    const gone = REQS.filter(r => !keep.includes(r));
+    for (const r of gone){
+      const ph = await byReq(r.id);
+      for (const x of ph) await del('shot', x.k);
+    }
+    REQS = keep;
+    await put('kv', {k:'reqs', v:REQS});
+    toast(gone.length + '건 만료 삭제 (7일 경과)');
+  }
+}
+
+/* 엑셀 불러오기 */
+$('xls').addEventListener('change', async e => {
+  const files = [...e.target.files];
+  if (!files.length) return;
+  $('ftxt').textContent = '읽는 중…';
+
+  let added = 0, fail = [];
+  for (const f of files){
+    try{
+      const tags = /\.csv$/i.test(f.name) ? await readCsv(f) : await readXlsx(f);
+      const uniq = [...new Set(tags.filter(Boolean))];
+      if (!uniq.length){ fail.push(f.name + ' (태그 없음)'); continue; }
+
+      const name = f.name.replace(/\.(xlsx|xls|csv)$/i,'');
+      const id = 'r_' + name.replace(/[^A-Za-z0-9가-힣]/g,'_');
+      const old = REQS.findIndex(r => r.id === id);
+      const rec = {id, name, tags: uniq, at: Date.now()};
+      if (old >= 0) REQS[old] = rec; else REQS.push(rec);
+      added++;
+    }catch(err){
+      fail.push(f.name + ' — ' + (err.message || '읽기 실패'));
+    }
+  }
+
+  await put('kv', {k:'reqs', v:REQS});
+  e.target.value = '';
+  $('ftxt').textContent = '＋ 검사신청서 엑셀 불러오기';
+  $('upd').textContent = REQS.length + '건 등록됨';
+
+  if (fail.length) alert('일부 실패\n\n' + fail.join('\n'));
+  else if (added) toast(added + '건 불러옴');
+  drawReqs();
+});
 
 async function drawReqs(){
   const q = $('q1').value.trim().toLowerCase();
@@ -356,7 +517,7 @@ async function drawReqs(){
         <div class="sb">태그 ${r.tags.length}개 · 사진 ${n}/${need}</div>
       </div>
       <div class="pill ${cls}">${need? Math.floor(n/need*100):0}%</div>
-      <div class="go">›</div>
+      <button class="del" data-x="${esc(r.id)}">✕</button>
     </div>`;
   }));
 
@@ -366,6 +527,20 @@ async function drawReqs(){
   box.innerHTML = (q ? '' : head) + body;
   box.querySelectorAll('.row').forEach(el =>
     el.onclick = () => openReq(el.dataset.r));
+  box.querySelectorAll('#reqs .del').forEach(el =>
+    el.onclick = async e => {
+      e.stopPropagation();
+      const r = REQS.find(x => x.id === el.dataset.x);
+      if (!r) return;
+      const ph = await byReq(r.id);
+      if (!confirm(r.name + '\n\n삭제합니다.' + (ph.length ? '\n사진 ' + ph.length + '장도 함께 삭제됩니다.' : ''))) return;
+      for (const x of ph) await del('shot', x.k);
+      REQS = REQS.filter(x => x.id !== r.id);
+      await put('kv', {k:'reqs', v:REQS});
+      $('upd').textContent = REQS.length + '건 등록됨';
+      toast('삭제했습니다');
+      drawReqs();
+    });
 }
 
 /* ══════════ 태그 목록 ══════════ */
@@ -674,14 +849,14 @@ $('zip').onclick = async () => {
       bytes: UTF8.encode('\uFEFF' + lines.join('\r\n')) });
 
     const blob = await makeZip(files, p => $('zip').textContent = '압축 중 ' + p + '%');
-    const zf = new File([blob], `${base}_사진.zip`, {type:'application/zip'});
+    const zf = new File([blob], `${base}_검사_사진.zip`, {type:'application/zip'});
 
     const done = RQ.tags.length - miss.length;
     const txt = `받는사람: ${MAIL_TO}\n\n신청서: ${RQ.name}\n태그: ${RQ.tags.length}개 (완료 ${done} / 미완료 ${miss.length})\n사진: ${all.length}장`;
 
     if (navigator.canShare && navigator.canShare({files:[zf]})){
       try{
-        await navigator.share({title:`[사진접수] ${base}`, text:txt, files:[zf]});
+        await navigator.share({title:`${base}_검사_사진`, text:txt, files:[zf]});
         toast('전송 완료');
       }catch(e){ if (e.name !== 'AbortError') dl(zf); }
     } else dl(zf);
@@ -717,15 +892,12 @@ $('wipe').onclick = async () => {
 function go(v){ document.querySelectorAll('.view').forEach(e=>e.classList.remove('on')); $(v).classList.add('on'); }
 $('b2').onclick = () => { go('v1'); drawReqs(); };
 $('b3').onclick = () => go('v2');
-$('sync').onclick = () => load(true);
 $('q1').oninput = drawReqs;
 $('q2').oninput = drawTags;
 document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
   b.classList.add('on'); FIL = b.dataset.f; drawTags();
 });
-addEventListener('online',  () => load(false));
-addEventListener('offline', () => load(false));
 $('mailto').textContent = MAIL_TO;
 $('cp').onclick = async () => {
   try {
@@ -742,7 +914,7 @@ $('cp').onclick = async () => {
     t.remove();
   }
 };
-load(false);
+load();
 
 /* 오프라인 지원 — 실패해도 앱은 정상 동작 */
 if ('serviceWorker' in navigator) {
