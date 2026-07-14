@@ -1,4 +1,4 @@
-const C = 'fp-v3';
+const C = 'fp-v4';
 
 self.addEventListener('install', e => {
   self.skipWaiting();
