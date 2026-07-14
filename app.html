@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="현장사진">
+<meta name="theme-color" content="#14181d">
+<title>현장 사진 접수</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root{
+    --bg:#14181d; --panel:#1d232b; --panel2:#252d37;
+    --line:#2f3944; --dim:#8794a3; --fg:#eef2f6;
+    --amber:#ffb020; --ok:#35d07f; --red:#ff5c52;
+    --tap:58px;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;overscroll-behavior:none}
+  body{
+    background:var(--bg);color:var(--fg);
+    font:17px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans KR",sans-serif;
+    -webkit-text-size-adjust:100%;
+  }
+  .mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+
+  /* ── 화면 ── */
+  .view{display:none;flex-direction:column;height:100dvh}
+  .view.on{display:flex}
+
+  /* ── 상단바 ── */
+  .top{
+    flex:0 0 auto;display:flex;align-items:center;gap:10px;
+    padding:calc(12px + env(safe-area-inset-top)) 14px 12px;
+    border-bottom:2px solid var(--line);background:var(--bg);
+  }
+  .back{
+    flex:0 0 auto;width:42px;height:42px;border:0;border-radius:9px;
+    background:var(--panel);color:var(--fg);font-size:22px;cursor:pointer;
+  }
+  .ttl{flex:1;min-width:0}
+  .ttl b{display:block;font-size:16px;font-weight:800;letter-spacing:-.2px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ttl span{display:block;font-size:11px;color:var(--dim);margin-top:1px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .badge{
+    flex:0 0 auto;font-size:11px;font-weight:800;padding:5px 9px;border-radius:20px;
+    background:var(--panel);color:var(--dim);letter-spacing:.03em;
+  }
+  .badge.off{background:rgba(255,176,32,.14);color:var(--amber)}
+
+  /* ── 본문 ── */
+  .body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 14px 0}
+  .body.pad{padding-bottom:calc(90px + env(safe-area-inset-bottom))}
+
+  /* ── 검색 ── */
+  .srch{
+    width:100%;height:52px;padding:0 14px;margin-bottom:12px;
+    background:var(--panel);border:2px solid var(--line);border-radius:10px;
+    color:var(--fg);font-size:17px;font-weight:700;font-family:inherit;
+  }
+  .srch:focus{outline:none;border-color:var(--amber)}
+  .srch::placeholder{color:#54606f;font-weight:500}
+
+  /* ── 리스트 ── */
+  .row{
+    display:flex;align-items:center;gap:12px;
+    min-height:var(--tap);padding:12px 14px;margin-bottom:8px;
+    background:var(--panel);border:2px solid var(--line);border-radius:11px;
+    cursor:pointer;
+  }
+  .row:active{background:var(--panel2)}
+  .row .grow{flex:1;min-width:0}
+  .row .nm{font-size:16px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row .sb{font-size:12px;color:var(--dim);margin-top:2px}
+  .row .go{flex:0 0 auto;color:#4c5866;font-size:20px}
+
+  .row.done{border-color:rgba(53,208,127,.45)}
+  .row.done .nm{color:var(--ok)}
+
+  .pill{
+    flex:0 0 auto;min-width:52px;text-align:center;
+    font-size:12px;font-weight:800;padding:7px 8px;border-radius:7px;
+    background:var(--line);color:var(--dim);font-variant-numeric:tabular-nums;
+  }
+  .pill.p{background:rgba(255,176,32,.16);color:var(--amber)}
+  .pill.d{background:rgba(53,208,127,.16);color:var(--ok)}
+
+  /* ── 필터 ── */
+  .tabs{display:flex;gap:6px;margin-bottom:12px}
+  .tab{
+    flex:1;height:40px;border:2px solid var(--line);border-radius:9px;
+    background:transparent;color:var(--dim);font:800 13px inherit;cursor:pointer;
+  }
+  .tab.on{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+
+  /* ── 슬롯 ── */
+  .slot{
+    display:flex;align-items:center;gap:12px;
+    padding:8px;margin-bottom:8px;
+    background:var(--panel);border:2px solid var(--line);border-radius:11px;
+    cursor:pointer;
+  }
+  .slot.on{border-color:var(--ok)}
+  .slot input{display:none}
+  .n{
+    flex:0 0 auto;width:52px;height:52px;border-radius:9px;background:var(--line);
+    display:flex;align-items:center;justify-content:center;
+    font:800 20px/1 inherit;color:var(--dim);font-variant-numeric:tabular-nums;
+  }
+  .slot.on .n{display:none}
+  .th{flex:0 0 auto;width:52px;height:52px;border-radius:9px;object-fit:cover;display:none;background:var(--line)}
+  .slot.on .th{display:block}
+  .st{flex:1;min-width:0}
+  .st b{display:block;font-size:15px;font-weight:700}
+  .st i{display:block;font-size:11px;color:var(--dim);font-style:normal;margin-top:2px}
+  .slot.on .st b{color:var(--ok)}
+  .re{flex:0 0 auto;font:800 11px inherit;color:var(--dim);
+    border:1px solid var(--line);border-radius:6px;padding:7px 9px;display:none}
+  .slot.on .re{display:block}
+
+  /* ── 하단 ── */
+  .bar{
+    flex:0 0 auto;padding:10px 14px calc(10px + env(safe-area-inset-bottom));
+    border-top:2px solid var(--line);background:var(--bg);display:flex;gap:8px;
+  }
+  .btn{
+    flex:1;min-height:var(--tap);border:0;border-radius:11px;
+    background:var(--line);color:#5b6674;font:800 17px inherit;cursor:not-allowed;
+  }
+  .btn.on{background:var(--amber);color:#191100;cursor:pointer}
+  .btn.on:active{transform:scale(.985)}
+  .btn.gh{background:transparent;border:2px solid var(--line);color:var(--fg);cursor:pointer;flex:0 0 auto;padding:0 18px}
+  .btn.dz{background:transparent;border:2px solid var(--red);color:var(--red);cursor:pointer}
+
+  /* ── 태그 직접 추가 ── */
+  .add{display:none;gap:6px;margin-bottom:12px}
+  .add.on{display:flex}
+  .add .srch{flex:1;margin-bottom:0;letter-spacing:.02em}
+  .plus{
+    flex:0 0 auto;width:72px;height:52px;border:0;border-radius:10px;
+    background:var(--amber);color:#191100;font:800 15px inherit;cursor:pointer;
+  }
+  .plus:active{transform:scale(.97)}
+  .del{
+    flex:0 0 auto;width:38px;height:38px;border:0;border-radius:8px;
+    background:transparent;color:#4c5866;font-size:19px;cursor:pointer;
+  }
+  .del:active{color:var(--red)}
+
+  .note{
+    padding:11px 13px;margin-bottom:12px;border-radius:9px;font-size:13px;font-weight:600;
+    background:rgba(255,176,32,.1);border-left:4px solid var(--amber);color:var(--amber);
+  }
+  .empty{padding:52px 20px;text-align:center;color:var(--dim);font-size:15px}
+  .stat{display:flex;gap:8px;margin-bottom:12px}
+  .stat div{
+    flex:1;padding:12px;background:var(--panel);border:2px solid var(--line);
+    border-radius:10px;text-align:center;
+  }
+  .stat b{display:block;font-size:24px;font-weight:800;font-variant-numeric:tabular-nums}
+  .stat span{display:block;font-size:11px;color:var(--dim);margin-top:2px;font-weight:700}
+
+  .toast{
+    position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom));
+    transform:translateX(-50%);z-index:99;
+    padding:12px 20px;border-radius:24px;background:var(--fg);color:var(--bg);
+    font:800 14px inherit;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .2s;
+  }
+  .toast.on{opacity:1}
+  @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<!-- ══ 1. 신청서 선택 ══ -->
+<div class="view on" id="v1">
+  <div class="top">
+    <div class="ttl"><b>검사신청서 선택</b><span id="upd">불러오는 중…</span></div>
+    <span class="badge" id="net">온라인</span>
+  </div>
+  <div class="body">
+    <input class="srch" id="q1" placeholder="신청서 검색">
+    <div id="reqs"></div>
+  </div>
+  <div class="bar">
+    <button class="btn gh" id="sync" style="flex:1">목록 새로고침</button>
+  </div>
+</div>
+
+<!-- ══ 2. 태그 목록 ══ -->
+<div class="view" id="v2">
+  <div class="top">
+    <button class="back" id="b2">←</button>
+    <div class="ttl"><b id="rqName">—</b><span id="rqStat">—</span></div>
+  </div>
+  <div class="body pad">
+    <div class="stat">
+      <div><b id="s1">0</b><span>전체 태그</span></div>
+      <div><b id="s2" style="color:var(--ok)">0</b><span>촬영 완료</span></div>
+      <div><b id="s3" style="color:var(--amber)">0</b><span>남음</span></div>
+    </div>
+    <div class="add" id="addBox">
+      <input class="srch mono" id="newTag" placeholder="태그 직접 입력" autocomplete="off" autocapitalize="characters" spellcheck="false">
+      <button class="plus" id="addBtn">추가</button>
+    </div>
+    <input class="srch" id="q2" placeholder="태그 검색">
+    <div class="tabs">
+      <button class="tab on" data-f="all">전체</button>
+      <button class="tab" data-f="todo">미완료</button>
+      <button class="tab" data-f="done">완료</button>
+    </div>
+    <div id="tags"></div>
+  </div>
+  <div class="bar">
+    <button class="btn gh" id="wipe">초기화</button>
+    <button class="btn" id="zip">ZIP 내보내기</button>
+  </div>
+</div>
+
+<!-- ══ 3. 촬영 ══ -->
+<div class="view" id="v3">
+  <div class="top">
+    <button class="back" id="b3">←</button>
+    <div class="ttl"><b class="mono" id="tgName">—</b><span id="tgSub">사진 5장 · 순서 중요</span></div>
+  </div>
+  <div class="body pad">
+    <div class="note">번호 순서대로 촬영하십시오. 저장 파일명에 순서가 기록됩니다.</div>
+    <div id="slots"></div>
+  </div>
+  <div class="bar">
+    <button class="btn" id="save">저장</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ══════════ 설정 ══════════ */
+const DATA_URL = './data/requests.json';   // PC에서 갱신하는 파일
+
+/* ══════════ 유틸 ══════════ */
+const $ = i => document.getElementById(i);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const safe = s => String(s).replace(/[\\/:*?"<>|]/g,'_').trim();
+let TO; const toast = m => { const t=$('toast'); t.textContent=m; t.classList.add('on');
+  clearTimeout(TO); TO=setTimeout(()=>t.classList.remove('on'),1900); };
+
+/* ══════════ IndexedDB (사진 보관) ══════════ */
+let DB;
+const db = () => new Promise((ok,no)=>{
+  if (DB) return ok(DB);
+  const r = indexedDB.open('fieldphoto', 1);
+  r.onupgradeneeded = e => {
+    const d = e.target.result;
+    if (!d.objectStoreNames.contains('shot')) {
+      const s = d.createObjectStore('shot', {keyPath:'k'});
+      s.createIndex('req', 'req');
+    }
+    if (!d.objectStoreNames.contains('kv')) d.createObjectStore('kv', {keyPath:'k'});
+  };
+  r.onsuccess = e => { DB = e.target.result; ok(DB); };
+  r.onerror = () => no(r.error);
+});
+const tx = async (st, mode) => (await db()).transaction(st, mode).objectStore(st);
+const put = async (st, v) => { const s = await tx(st,'readwrite'); return new Promise((ok,no)=>{
+  const r = s.put(v); r.onsuccess=()=>ok(); r.onerror=()=>no(r.error); }); };
+const get = async (st, k) => { const s = await tx(st,'readonly'); return new Promise((ok,no)=>{
+  const r = s.get(k); r.onsuccess=()=>ok(r.result); r.onerror=()=>no(r.error); }); };
+const del = async (st, k) => { const s = await tx(st,'readwrite'); return new Promise((ok,no)=>{
+  const r = s.delete(k); r.onsuccess=()=>ok(); r.onerror=()=>no(r.error); }); };
+const byReq = async id => { const s = await tx('shot','readonly'); return new Promise((ok,no)=>{
+  const r = s.index('req').getAll(id); r.onsuccess=()=>ok(r.result||[]); r.onerror=()=>no(r.error); }); };
+
+const key = (req, tag, i) => `${req}\u0000${tag}\u0000${i}`;
+
+/* ══════════ 상태 ══════════ */
+let REQS = [];      // [{id,name,tags:[]}]
+let RQ = null;      // 선택된 신청서
+let TG = null;      // 선택된 태그
+let CNT = {};       // {tag: 촬영수}
+let BUF = [null,null,null,null,null];
+let FIL = 'all';
+
+/* ── 직접 입력 ── */
+const MID = '_manual';
+const manualTags = async () => ((await get('kv','manual'))?.v) || [];
+const saveManual = t => put('kv', {k:'manual', v:t});
+
+/* ══════════ 신청서 목록 ══════════ */
+async function load(force){
+  const on = navigator.onLine;
+  $('net').textContent = on ? '온라인' : '오프라인';
+  $('net').classList.toggle('off', !on);
+
+  if (on) {
+    try{
+      const r = await fetch(DATA_URL + '?t=' + Date.now(), {cache:'no-store'});
+      if (!r.ok) throw 0;
+      const j = await r.json();
+      REQS = j.requests || [];
+      await put('kv', {k:'reqs', v:j});
+      $('upd').textContent = '갱신 ' + (j.updated || '-') + ' · ' + REQS.length + '건';
+      if (force) toast('목록을 갱신했습니다');
+      drawReqs(); return;
+    }catch(e){ /* 캐시로 */ }
+  }
+  const c = await get('kv','reqs');
+  if (c && c.v){
+    REQS = c.v.requests || [];
+    $('upd').textContent = '저장본 ' + (c.v.updated || '-') + ' · ' + REQS.length + '건';
+    if (force) toast(on ? '갱신 실패 — 저장본 사용' : '오프라인 — 저장본 사용');
+  } else {
+    REQS = [];
+    $('upd').textContent = '목록 없음 — 온라인에서 1회 접속 필요';
+  }
+  drawReqs();
+}
+
+async function drawReqs(){
+  const q = $('q1').value.trim().toLowerCase();
+  const list = REQS.filter(r => !q || r.name.toLowerCase().includes(q));
+  const box = $('reqs');
+
+  /* 직접 입력 — 항상 맨 위 고정 */
+  const mTags = await manualTags();
+  const mShot = (await byReq(MID)).length;
+  const head = `<div class="row" data-r="${MID}" style="border-color:var(--amber)">
+      <div class="grow">
+        <div class="nm" style="color:var(--amber)">＋ 직접 입력</div>
+        <div class="sb">신청서 없이 태그를 쳐서 촬영 · 태그 ${mTags.length}개 · 사진 ${mShot}장</div>
+      </div>
+      <div class="go">›</div>
+    </div>`;
+
+  const rows = await Promise.all(list.map(async r => {
+    const n = (await byReq(r.id)).length;
+    const need = r.tags.length * 5;
+    const full = need > 0 && n >= need;
+    const cls = full ? 'd' : n ? 'p' : '';
+    return `<div class="row ${full?'done':''}" data-r="${esc(r.id)}">
+      <div class="grow">
+        <div class="nm">${esc(r.name)}</div>
+        <div class="sb">태그 ${r.tags.length}개 · 사진 ${n}/${need}</div>
+      </div>
+      <div class="pill ${cls}">${need? Math.floor(n/need*100):0}%</div>
+      <div class="go">›</div>
+    </div>`;
+  }));
+
+  const body = rows.length ? rows.join('')
+    : `<div class="empty">${REQS.length ? '검색 결과 없음' : '검사신청서가 없습니다.<br>온라인 상태에서 새로고침하거나<br>위 직접 입력을 사용하십시오.'}</div>`;
+
+  box.innerHTML = (q ? '' : head) + body;
+  box.querySelectorAll('.row').forEach(el =>
+    el.onclick = () => openReq(el.dataset.r));
+}
+
+/* ══════════ 태그 목록 ══════════ */
+async function openReq(id){
+  if (id === MID){
+    RQ = {id:MID, name:'직접 입력', tags: await manualTags(), manual:true};
+  } else {
+    RQ = REQS.find(r => r.id === id);
+    if (!RQ) return;
+  }
+  $('rqName').textContent = RQ.name;
+  $('addBox').classList.toggle('on', !!RQ.manual);
+  $('newTag').value = '';
+  go('v2');
+  await refresh();
+}
+
+/* 태그 추가 */
+async function addTag(){
+  const t = $('newTag').value.trim().toUpperCase();
+  if (!t) return;
+  if (RQ.tags.some(x => x.toUpperCase() === t)) { toast('이미 있는 태그입니다'); $('newTag').value=''; return; }
+  RQ.tags.push(t);
+  await saveManual(RQ.tags);
+  $('newTag').value = '';
+  toast(`${t} 추가`);
+  await refresh();
+}
+$('addBtn').onclick = addTag;
+$('newTag').addEventListener('keydown', e => { if (e.key === 'Enter') addTag(); });
+
+/* 태그 삭제 (직접 입력 전용) */
+async function rmTag(t){
+  const n = CNT[t] || 0;
+  const msg = n ? `${t}\n사진 ${n}장도 함께 삭제됩니다.` : `${t}\n삭제하시겠습니까?`;
+  if (!confirm(msg)) return;
+  for (let i=0;i<5;i++) await del('shot', key(MID, t, i));
+  RQ.tags = RQ.tags.filter(x => x !== t);
+  await saveManual(RQ.tags);
+  toast('삭제했습니다');
+  await refresh();
+}
+
+async function refresh(){
+  const all = await byReq(RQ.id);
+  CNT = {};
+  all.forEach(s => CNT[s.tag] = (CNT[s.tag]||0) + 1);
+
+  const done = RQ.tags.filter(t => (CNT[t]||0) >= 5).length;
+  $('s1').textContent = RQ.tags.length;
+  $('s2').textContent = done;
+  $('s3').textContent = RQ.tags.length - done;
+  $('rqStat').textContent = `사진 ${all.length}장 · 기기에 저장됨`;
+  $('zip').classList.toggle('on', all.length > 0);
+  $('zip').disabled = all.length === 0;
+  drawTags();
+}
+
+function drawTags(){
+  const q = $('q2').value.trim().toUpperCase();
+  const box = $('tags');
+  const list = RQ.tags.filter(t => {
+    if (q && !t.toUpperCase().includes(q)) return false;
+    const n = CNT[t]||0;
+    if (FIL === 'todo') return n < 5;
+    if (FIL === 'done') return n >= 5;
+    return true;
+  });
+  if (!list.length){
+    box.innerHTML = `<div class="empty">${
+      RQ.manual && !RQ.tags.length
+        ? '태그를 직접 입력해 추가하십시오.'
+        : '해당 태그 없음'}</div>`;
+    return;
+  }
+
+  box.innerHTML = list.map(t => {
+    const n = CNT[t]||0, f = n >= 5;
+    return `<div class="row ${f?'done':''}" data-t="${esc(t)}">
+      <div class="grow"><div class="nm mono">${esc(t)}</div></div>
+      <div class="pill ${f?'d':n?'p':''}">${n}/5</div>
+      ${RQ.manual ? `<button class="del" data-x="${esc(t)}">✕</button>` : '<div class="go">›</div>'}
+    </div>`;
+  }).join('');
+
+  box.querySelectorAll('.row').forEach(el =>
+    el.onclick = () => openTag(el.dataset.t));
+  box.querySelectorAll('.del').forEach(el =>
+    el.onclick = e => { e.stopPropagation(); rmTag(el.dataset.x); });
+}
+
+/* ══════════ 촬영 ══════════ */
+async function openTag(t){
+  TG = t;
+  $('tgName').textContent = t;
+  BUF = [null,null,null,null,null];
+  for (let i=0;i<5;i++){
+    const s = await get('shot', key(RQ.id, t, i));
+    if (s) BUF[i] = s.blob;
+  }
+  drawSlots();
+  go('v3');
+}
+
+let URLS = [];
+function drawSlots(){
+  URLS.forEach(u => URL.revokeObjectURL(u));
+  URLS = [];
+  $('slots').innerHTML = [0,1,2,3,4].map(i => {
+    const b = BUF[i];
+    let src = '';
+    if (b) { const u = URL.createObjectURL(b); URLS.push(u); src = `src="${u}"`; }
+    return `<label class="slot ${b?'on':''}">
+      <div class="n">${i+1}</div>
+      <img class="th" ${src} alt="">
+      <div class="st">
+        <b>${b ? '사진 '+(i+1) : '사진 '+(i+1)+' 촬영'}</b>
+        <i>${b ? (b.size/1048576).toFixed(1)+' MB · 저장됨' : '비어 있음'}</i>
+      </div>
+      <div class="re">다시</div>
+      <input type="file" accept="image/*" capture="environment" data-i="${i}">
+    </label>`;
+  }).join('');
+
+  const n = BUF.filter(Boolean).length;
+  $('tgSub').textContent = `사진 ${n}/5 · 순서 중요`;
+  const ok = n > 0;
+  $('save').classList.toggle('on', ok);
+  $('save').disabled = !ok;
+  $('save').textContent = n === 5 ? '저장' : n ? `저장 (${n}/5 — ${5-n}장 부족)` : '사진을 촬영하십시오';
+}
+
+/* 아이폰 원본 사진은 4~8MB. 메모리 폭발 방지를 위해 축소 저장 */
+function shrink(file){
+  return new Promise(ok => {
+    const img = new Image();
+    const u = URL.createObjectURL(file);
+    img.onload = () => {
+      const MAX = 1600;
+      let {width:w, height:h} = img;
+      const r = Math.min(1, MAX / Math.max(w, h));
+      w = Math.round(w * r); h = Math.round(h * r);
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(u);
+      c.toBlob(b => ok(b || file), 'image/jpeg', 0.82);
+    };
+    img.onerror = () => { URL.revokeObjectURL(u); ok(file); };
+    img.src = u;
+  });
+}
+
+$('slots').addEventListener('change', async e => {
+  const inp = e.target;
+  if (inp.type !== 'file' || !inp.files[0]) return;
+  const i = +inp.dataset.i;
+  toast('처리 중…');
+  BUF[i] = await shrink(inp.files[0]);
+  drawSlots();
+});
+
+$('save').onclick = async () => {
+  let n = 0;
+  for (let i=0;i<5;i++){
+    const k = key(RQ.id, TG, i);
+    if (BUF[i]){
+      const f = BUF[i];
+      const ext = (f.name && f.name.includes('.')) ? f.name.split('.').pop().toLowerCase() : 'jpg';
+      await put('shot', {k, req:RQ.id, tag:TG, idx:i, ext, blob:f, at:Date.now()});
+      n++;
+    } else {
+      await del('shot', k);
+    }
+  }
+  toast(`${TG} — ${n}장 저장`);
+  await refresh();
+  go('v2');
+};
+
+/* ══════════ ZIP ══════════ */
+$('zip').onclick = async () => {
+  const all = (await byReq(RQ.id)).sort((a,b) =>
+    a.tag.localeCompare(b.tag) || a.idx - b.idx);
+  if (!all.length) return;
+
+  $('zip').textContent = '압축 중…';
+  $('zip').disabled = true;
+
+  const stamp = new Date().toISOString().slice(0,10).replace(/-/g,'');
+  const base = RQ.manual
+    ? `직접입력_${stamp}`
+    : safe(RQ.name.replace(/\.(xlsx|xls|csv)$/i,''));
+  const z = new JSZip();
+  const root = z.folder(base);
+
+  const lines = ['신청서,태그,순번,파일명'];
+  all.forEach(s => {
+    const fn = `${safe(s.tag)}_${String(s.idx+1).padStart(2,'0')}.${s.ext||'jpg'}`;
+    root.folder(safe(s.tag)).file(fn, s.blob);
+    lines.push(`${base},${s.tag},${s.idx+1},${fn}`);
+  });
+
+  const miss = RQ.tags.filter(t => (CNT[t]||0) < 5);
+  if (miss.length) root.file('_미완료태그.txt', miss.map(t=>`${t}  (${CNT[t]||0}/5)`).join('\r\n'));
+  root.file('_목록.csv', '\uFEFF' + lines.join('\r\n'));
+
+  const blob = await z.generateAsync({type:'blob', compression:'STORE'}, m => {
+    $('zip').textContent = '압축 중 ' + Math.round(m.percent) + '%';
+  });
+  const zf = new File([blob], `${base}_사진.zip`, {type:'application/zip'});
+
+  $('zip').textContent = 'ZIP 내보내기';
+  $('zip').disabled = false;
+
+  const done = RQ.tags.length - miss.length;
+  const txt = `신청서: ${RQ.name}\n태그: ${RQ.tags.length}개 (완료 ${done} / 미완료 ${miss.length})\n사진: ${all.length}장`;
+
+  if (navigator.canShare && navigator.canShare({files:[zf]})){
+    try{
+      await navigator.share({title:`[사진접수] ${base}`, text:txt, files:[zf]});
+      toast('전송 완료');
+    }catch(e){ if (e.name !== 'AbortError') dl(zf); }
+  } else dl(zf);
+};
+
+function dl(f){
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(f);
+  a.download = f.name;
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
+  toast('ZIP 저장됨 — 메일에 첨부하십시오');
+}
+
+/* ══════════ 초기화 ══════════ */
+$('wipe').onclick = async () => {
+  const all = await byReq(RQ.id);
+  if (!all.length) return toast('삭제할 사진이 없습니다');
+  if (!confirm(`${RQ.name}\n사진 ${all.length}장을 모두 삭제합니다.\n되돌릴 수 없습니다.`)) return;
+  for (const s of all) await del('shot', s.k);
+  toast('삭제했습니다');
+  await refresh();
+};
+
+/* ══════════ 화면 전환 ══════════ */
+function go(v){ document.querySelectorAll('.view').forEach(e=>e.classList.remove('on')); $(v).classList.add('on'); }
+$('b2').onclick = () => { go('v1'); drawReqs(); };
+$('b3').onclick = () => go('v2');
+$('sync').onclick = () => load(true);
+$('q1').oninput = drawReqs;
+$('q2').oninput = drawTags;
+document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on'); FIL = b.dataset.f; drawTags();
+});
+addEventListener('online',  () => load(false));
+addEventListener('offline', () => load(false));
+
+/* 이전에 등록된 서비스워커/캐시 완전 제거 (오류 복구) */
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations()
+    .then(rs => rs.forEach(r => r.unregister()))
+    .catch(()=>{});
+}
+if (window.caches) {
+  caches.keys().then(ks => ks.forEach(k => caches.delete(k))).catch(()=>{});
+}
+
+load(false);
+</script>
+</body>
+</html>
