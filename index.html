@@ -201,7 +201,7 @@
       <input type="file" id="xls" accept=".xlsx,.xls,.csv" multiple>
     </label>
     <div class="note" style="margin-top:12px">
-      카카오워크 등으로 받은 검사신청서 파일을 선택하십시오. A열의 태그를 읽어옵니다.
+      검사신청서 QR을 아이폰 <b>기본 카메라</b>로 찍으면 태그가 자동 등록됩니다.<br>또는 아래에서 엑셀 파일을 직접 선택하십시오.
     </div>
     <input class="srch" id="q1" placeholder="신청서 검색">
     <div id="reqs"></div>
@@ -310,6 +310,61 @@ const MID = '_manual';
 const manualTags = async () => ((await get('kv','manual'))?.v) || [];
 const saveManual = t => put('kv', {k:'manual', v:t});
 
+
+
+/* ══════════ QR 링크로 신청서 받기 ══════════
+   PC 프로그램이 만든 QR = 태그를 압축해 담은 링크.
+   아이폰 기본 카메라로 스캔하면 이 앱이 열리며 자동 등록된다.
+   #뒤의 내용은 서버로 전송되지 않는다. */
+async function fromHash(){
+  const h = location.hash || '';
+  const m = h.match(/[#&]d=([A-Za-z0-9\-_]+)/);
+  if (!m) return false;
+
+  history.replaceState(null, '', location.pathname);   // 주소창 정리
+
+  try{
+    let b64 = m[1].replace(/-/g,'+').replace(/_/g,'/');
+    while (b64.length % 4) b64 += '=';
+    const bin = atob(b64);
+    const packed = new Uint8Array(bin.length);
+    for (let i=0;i<bin.length;i++) packed[i] = bin.charCodeAt(i);
+
+    const ds = new DecompressionStream('deflate-raw');
+    const buf = await new Response(new Blob([packed]).stream().pipeThrough(ds)).arrayBuffer();
+    const obj = JSON.parse(new TextDecoder().decode(buf));
+
+    /* 신청서 여러 건이 한 QR에 들어온다 */
+    const list = Array.isArray(obj.r) ? obj.r
+               : (obj.n ? [{n: obj.n, t: obj.t}] : []);   // 구버전 형식
+    if (!list.length) throw new Error('신청서가 없습니다');
+
+    if (!Array.isArray(REQS)) REQS = [];
+    let cnt = 0, tot = 0;
+
+    for (const it of list){
+      const name = String(it.n || '검사신청서').trim();
+      const tags = [...new Set((it.t || []).map(x => String(x).trim()).filter(Boolean))];
+      if (!tags.length) continue;
+
+      const id = 'r_' + name.replace(/[^A-Za-z0-9가-힣]/g,'_');
+      const at = REQS.findIndex(r => r.id === id);
+      const rec = {id, name, tags, at: Date.now()};
+      if (at >= 0) REQS[at] = rec; else REQS.push(rec);
+      cnt++; tot += tags.length;
+    }
+    if (!cnt) throw new Error('태그가 없습니다');
+
+    await put('kv', {k:'reqs', v:REQS});
+    $('upd').textContent = REQS.length + '건 등록됨';
+    drawReqs();
+    toast('신청서 ' + cnt + '건 · 태그 ' + tot + '개 등록');
+    return true;
+  }catch(e){
+    alert('QR 읽기 실패\n\n' + (e.message || e));
+    return false;
+  }
+}
 
 /* ══════════ 엑셀 읽기 (외부 라이브러리 없음) ══════════
    xlsx = ZIP 이므로 직접 풀어서 A열만 뽑는다.
@@ -433,14 +488,18 @@ async function readCsv(file){
 /* ══════════ 신청서 목록 ══════════ */
 async function load(){
   const c = await get('kv','reqs');
-  REQS = (c && c.v) ? c.v : [];
-  purge();
+  const v = c && c.v;
+  REQS = Array.isArray(v) ? v
+       : (v && Array.isArray(v.requests)) ? v.requests   // 구버전 형식
+       : [];
+  await purge();
   $('upd').textContent = REQS.length ? REQS.length + '건 등록됨' : '신청서를 불러오십시오';
   drawReqs();
 }
 
 /* 7일 지난 신청서 자동 삭제 */
 async function purge(){
+  if (!Array.isArray(REQS)) { REQS = []; return; }
   const LIMIT = 7 * 86400000;
   const now = Date.now();
   const keep = REQS.filter(r => !r.at || (now - r.at) < LIMIT);
@@ -462,6 +521,7 @@ $('xls').addEventListener('change', async e => {
   if (!files.length) return;
   $('ftxt').textContent = '읽는 중…';
 
+  if (!Array.isArray(REQS)) REQS = [];
   let added = 0, fail = [];
   for (const f of files){
     try{
