@@ -265,7 +265,7 @@ const MAIL_TO  = 'jinshaha@hd.com';        // 사진 접수 주소
 /* ══════════ 유틸 ══════════ */
 const $ = i => document.getElementById(i);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const safe = s => String(s).replace(/[\\/:*?"<>|]/g,'_').trim();
+const safe = s => String(s).normalize('NFC').replace(/[\\/:*?"<>|]/g,'_').trim();
 let TO; const toast = m => { const t=$('toast'); t.textContent=m; t.classList.add('on');
   clearTimeout(TO); TO=setTimeout(()=>t.classList.remove('on'),1900); };
 
@@ -967,14 +967,15 @@ $('zip').onclick = async () => {
       bytes: UTF8.encode('\uFEFF' + lines.join('\r\n')) });
 
     const blob = await makeZip(files, p => $('zip').textContent = '압축 중 ' + p + '%');
-    const zf = new File([blob], `${base}_검사_사진.zip`, {type:'application/zip'});
+    const subject = `${base}_Inspection 검사사진 [Transform]`.normalize('NFC');
+    const zf = new File([blob], subject + '.zip', {type:'application/zip'});
 
     const done = RQ.tags.length - miss.length;
     const txt = `받는사람: ${MAIL_TO}\n\n신청서: ${RQ.name}\n태그: ${RQ.tags.length}개 (완료 ${done} / 미완료 ${miss.length})\n사진: ${all.length}장`;
 
     if (navigator.canShare && navigator.canShare({files:[zf]})){
       try{
-        await navigator.share({title:`${base}_검사_사진`, text:txt, files:[zf]});
+        await navigator.share({title: subject, text:txt, files:[zf]});
         toast('전송 완료');
       }catch(e){ if (e.name !== 'AbortError') dl(zf); }
     } else dl(zf);
