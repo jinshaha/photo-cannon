@@ -423,7 +423,17 @@ async function unzip(buf, wanted){
   return out;
 }
 
-/* xlsx → A열 값 배열 */
+/* xlsx → 태그 배열 ('Tag No.' 헤더 자동 탐지, 없으면 A열) */
+const TAG_HEAD = /tag\s*(no|number)?\.?$|^태그/i;
+const REP_HEAD = /report\s*no|보고서\s*번호|신청서\s*번호/i;
+
+function colNum(ref){            // "C12" → 2 (0-based)
+  const a = (ref.match(/^[A-Z]+/) || ['A'])[0];
+  let n = 0;
+  for (const ch of a) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n - 1;
+}
+
 async function readXlsx(file){
   const buf = await file.arrayBuffer();
   const z = await unzip(buf, [
@@ -441,8 +451,7 @@ async function readXlsx(file){
     let m;
     while ((m = re.exec(ss))){
       const txt = (m[1].match(/<t\b[^>]*>([\s\S]*?)<\/t>/g) || [])
-        .map(x => x.replace(/<[^>]+>/g, ''))
-        .join('');
+        .map(x => x.replace(/<[^>]+>/g, '')).join('');
       shared.push(unxml(txt));
     }
   }
@@ -455,27 +464,61 @@ async function readXlsx(file){
     sheet = z[k.sort()[0]];
   }
 
-  /* A열 셀만 추출 */
-  const tags = [];
-  const cre = /<c\s+r="A(\d+)"([^>]*)(?:\/>|>([\s\S]*?)<\/c>)/g;
-  let m;
-  while ((m = cre.exec(sheet))){
-    const attr = m[2] || '';
-    const body = m[3] || '';
-    const type = (attr.match(/t="([^"]+)"/) || [])[1];
-    let v = '';
-
-    if (type === 'inlineStr'){
-      v = (body.match(/<t\b[^>]*>([\s\S]*?)<\/t>/) || [])[1] || '';
-    } else {
-      const raw = (body.match(/<v>([\s\S]*?)<\/v>/) || [])[1];
-      if (raw === undefined) continue;
-      v = (type === 's') ? (shared[+raw] ?? '') : raw;
+  /* 행 단위로 셀 수집 */
+  const rows = [];
+  const rre = /<row\b[^>]*r="(\d+)"[^>]*>([\s\S]*?)<\/row>/g;
+  const cre = /<c\s+r="([A-Z]+\d+)"([^>]*)(?:\/>|>([\s\S]*?)<\/c>)/g;
+  let rm;
+  while ((rm = rre.exec(sheet))){
+    const cells = {};
+    let cm;
+    cre.lastIndex = 0;
+    while ((cm = cre.exec(rm[2]))){
+      const attr = cm[2] || '', body = cm[3] || '';
+      const type = (attr.match(/t="([^"]+)"/) || [])[1];
+      let v = '';
+      if (type === 'inlineStr'){
+        v = (body.match(/<t\b[^>]*>([\s\S]*?)<\/t>/) || [])[1] || '';
+      } else {
+        const raw = (body.match(/<v>([\s\S]*?)<\/v>/) || [])[1];
+        if (raw === undefined) continue;
+        v = (type === 's') ? (shared[+raw] ?? '') : raw;
+      }
+      v = unxml(String(v)).trim();
+      if (v) cells[colNum(cm[1])] = v;
     }
-    v = unxml(String(v)).trim();
-    if (v) tags.push(v);
+    rows.push(cells);
   }
-  return tags;
+
+  /* Report No. 찾기 (라벨 오른쪽 값) */
+  let report = '';
+  for (let i = 0; i < Math.min(rows.length, 30) && !report; i++){
+    const ks = Object.keys(rows[i]).map(Number).sort((a,b)=>a-b);
+    for (let x = 0; x < ks.length; x++){
+      if (REP_HEAD.test(rows[i][ks[x]])){
+        for (let y = x+1; y < ks.length; y++){
+          if (rows[i][ks[y]]){ report = rows[i][ks[y]]; break; }
+        }
+        if (report) break;
+      }
+    }
+  }
+
+  /* 헤더에서 Tag No. 열 찾기 */
+  let col = 0, start = 0;
+  outer:
+  for (let i = 0; i < Math.min(rows.length, 30); i++){
+    for (const k in rows[i]){
+      if (TAG_HEAD.test(rows[i][k])){ col = +k; start = i + 1; break outer; }
+    }
+  }
+
+  const out = [];
+  for (let i = start; i < rows.length; i++){
+    const v = rows[i][col];
+    if (v) out.push(v);
+  }
+  return {tags: out, report};
 }
 
 function unxml(t){
@@ -484,12 +527,20 @@ function unxml(t){
           .replace(/&amp;/g,'&');
 }
 
-/* csv → A열 */
+/* csv → 태그 배열 */
 async function readCsv(file){
   const txt = await file.text();
-  return txt.split(/\r?\n/)
-    .map(l => (l.split(',')[0] || '').replace(/^"|"$/g,'').trim())
-    .filter(Boolean);
+  const rows = txt.split(/\r?\n/).map(l =>
+    l.split(',').map(c => c.replace(/^"|"$/g,'').trim()));
+
+  let col = 0, start = 0;
+  outer:
+  for (let i = 0; i < Math.min(rows.length, 30); i++){
+    for (let j = 0; j < rows[i].length; j++){
+      if (TAG_HEAD.test(rows[i][j])){ col = j; start = i + 1; break outer; }
+    }
+  }
+  return {tags: rows.slice(start).map(r => r[col] || '').filter(Boolean), report: ''};
 }
 
 /* ══════════ 신청서 목록 ══════════ */
@@ -532,11 +583,11 @@ $('xls').addEventListener('change', async e => {
   let added = 0, fail = [];
   for (const f of files){
     try{
-      const tags = /\.csv$/i.test(f.name) ? await readCsv(f) : await readXlsx(f);
-      const uniq = [...new Set(tags.filter(Boolean))];
+      const res = /\.csv$/i.test(f.name) ? await readCsv(f) : await readXlsx(f);
+      const uniq = [...new Set(res.tags.filter(Boolean))];
       if (!uniq.length){ fail.push(f.name + ' (태그 없음)'); continue; }
 
-      const name = f.name.replace(/\.(xlsx|xls|csv)$/i,'');
+      const name = res.report || f.name.replace(/\.(xlsx|xls|csv)$/i,'');
       const id = 'r_' + name.replace(/[^A-Za-z0-9가-힣]/g,'_');
       const old = REQS.findIndex(r => r.id === id);
       const rec = {id, name, tags: uniq, at: Date.now()};
