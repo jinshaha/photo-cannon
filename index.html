@@ -1032,7 +1032,8 @@ $('cp').onclick = async () => {
     t.remove();
   }
 };
-load();
+load().then(fromHash).catch(e => alert('시작 실패\n\n' + (e.message || e)));
+addEventListener('hashchange', fromHash);
 
 /* 오프라인 지원 — 실패해도 앱은 정상 동작 */
 if ('serviceWorker' in navigator) {
