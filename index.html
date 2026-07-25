@@ -319,7 +319,14 @@ const saveManual = t => put('kv', {k:'manual', v:t});
 async function fromHash(){
   const h = location.hash || '';
   const m = h.match(/[#&]d=([A-Za-z0-9\-_]+)/);
-  if (!m) return false;
+  if (!m){
+    if (h.length > 2) alert('QR 데이터를 인식하지 못했습니다\\n\\n' + h.slice(0,60));
+    return false;
+  }
+  if (!window.DecompressionStream){
+    alert('이 브라우저는 QR 등록을 지원하지 않습니다.\\nSafari로 열어 주십시오.');
+    return false;
+  }
 
   history.replaceState(null, '', location.pathname);   // 주소창 정리
 
