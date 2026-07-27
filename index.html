@@ -233,7 +233,7 @@
     <div id="tags"></div>
   </div>
   <div class="bar" style="flex-direction:column;gap:8px">
-    <button class="to" id="cp">받는사람 <b id="mailto">—</b> · 탭하면 복사</button>
+    <button class="to" id="cp"><span id="mailto">받는사람 <b>미설정</b></span></button>
     <div style="display:flex;gap:8px;width:100%">
       <button class="btn gh" id="wipe">초기화</button>
       <button class="btn" id="zip">사진 전송</button>
@@ -260,7 +260,6 @@
 
 <script>
 /* ══════════ 설정 ══════════ */
-const MAIL_TO  = 'jinshaha@hd.com';        // 사진 접수 주소
 
 /* ══════════ 유틸 ══════════ */
 const $ = i => document.getElementById(i);
@@ -304,6 +303,7 @@ let TG = null;      // 선택된 태그
 let CNT = {};       // {tag: 촬영수}
 let BUF = [null,null,null,null,null];
 let FIL = 'all';
+let MAIL_TO = '';   // 접수 메일 주소 (검사원이 직접 등록, 기기에 보관)
 
 /* ── 직접 입력 ── */
 const MID = '_manual';
@@ -971,7 +971,7 @@ $('zip').onclick = async () => {
     const zf = new File([blob], subject + '.zip', {type:'application/zip'});
 
     const done = RQ.tags.length - miss.length;
-    const txt = `받는사람: ${MAIL_TO}\n\n신청서: ${RQ.name}\n태그: ${RQ.tags.length}개 (완료 ${done} / 미완료 ${miss.length})\n사진: ${all.length}장`;
+    const txt = (MAIL_TO ? `받는사람: ${MAIL_TO}\n\n` : '') + `신청서: ${RQ.name}\n태그: ${RQ.tags.length}개 (완료 ${done} / 미완료 ${miss.length})\n사진: ${all.length}장`;
 
     if (navigator.canShare && navigator.canShare({files:[zf]})){
       try{
@@ -1017,22 +1017,50 @@ document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
   b.classList.add('on'); FIL = b.dataset.f; drawTags();
 });
-$('mailto').textContent = MAIL_TO;
+function showMail(){
+  $('mailto').innerHTML = MAIL_TO
+    ? '받는사람 <b>' + esc(MAIL_TO) + '</b> · 탭하면 복사 / 길게 누르면 변경'
+    : '받는사람 <b>미설정</b> · 탭하여 등록';
+}
+
+async function setMail(){
+  const v = prompt('사진을 받을 메일 주소를 입력하십시오.\n(이 기기에만 저장됩니다)', MAIL_TO || '');
+  if (v === null) return false;
+  const t = v.trim();
+  if (t && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t)){
+    alert('메일 주소 형식이 올바르지 않습니다.');
+    return false;
+  }
+  MAIL_TO = t;
+  await put('kv', {k:'mailto', v:t});
+  showMail();
+  return !!t;
+}
+
 $('cp').onclick = async () => {
-  try {
+  if (!MAIL_TO){ await setMail(); return; }
+  try{
     await navigator.clipboard.writeText(MAIL_TO);
     toast('주소 복사됨');
-  } catch(e) {
+  }catch(e){
     const t = document.createElement('textarea');
     t.value = MAIL_TO;
     t.style.cssText = 'position:fixed;opacity:0';
-    document.body.appendChild(t);
-    t.select();
+    document.body.appendChild(t); t.select();
     try { document.execCommand('copy'); toast('주소 복사됨'); }
     catch(e2){ toast(MAIL_TO); }
     t.remove();
   }
 };
+/* 짧게 탭 = 복사 / 길게 누르기 = 주소 변경 */
+let HOLD;
+$('cp').addEventListener('touchstart', () => { HOLD = setTimeout(setMail, 600); }, {passive:true});
+['touchend','touchmove','touchcancel'].forEach(ev =>
+  $('cp').addEventListener(ev, () => clearTimeout(HOLD), {passive:true}));
+$('cp').oncontextmenu = e => { e.preventDefault(); };
+
+get('kv','mailto').then(r => { MAIL_TO = (r && r.v) || ''; showMail(); }).catch(showMail);
+
 load().then(fromHash).catch(e => alert('시작 실패\n\n' + (e.message || e)));
 addEventListener('hashchange', fromHash);
 
